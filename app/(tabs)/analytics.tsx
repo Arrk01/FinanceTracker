@@ -32,6 +32,7 @@ const AVAILABLE_MONTHS = [
   { label: 'Mar 2026', month: 2, year: 2026 },
   { label: 'Apr 2026', month: 3, year: 2026 },
   { label: 'May 2026', month: 4, year: 2026 },
+  { label: 'Jun 2026', month: 5, year: 2026 },
 ];
 
 export default function AnalyticsScreen() {

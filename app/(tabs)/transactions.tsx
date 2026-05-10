@@ -50,7 +50,7 @@ const SORT_OPTIONS: { key: SortOption; label: string; icon: string }[] = [
 const CURRENT_YEAR = 2026;
 const MONTH_FILTERS = [
   'All',
-  ...MONTH_NAMES.slice(0, 6).map(m => `${m} ${CURRENT_YEAR}`),
+  ...MONTH_NAMES.slice(0, 9).map(m => `${m} ${CURRENT_YEAR}`),
 ];
 
 export default function TransactionsScreen() {
