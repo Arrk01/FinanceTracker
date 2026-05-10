@@ -38,6 +38,18 @@ import { CategoryBadge, TypeBadge } from '@/components/ui/CategoryBadge';
 
 type SortOption = 'newest' | 'oldest' | 'highest' | 'lowest';
 type TypeFilter = 'All' | TransactionType;
+type ViewMode = 'list' | 'people';
+
+interface PersonGroup {
+  name: string;
+  total: number;
+  count: number;
+  lastDate: string;
+  transactions: Transaction[];
+  category: Transaction['category'];
+  type: Transaction['type'];
+  initials: string;
+}
 
 const TYPE_FILTERS: TypeFilter[] = ['All', 'Need', 'Want', 'Saving'];
 const SORT_OPTIONS: { key: SortOption; label: string; icon: string }[] = [
@@ -53,12 +65,57 @@ const MONTH_FILTERS = [
   ...MONTH_NAMES.slice(0, 9).map(m => `${m} ${CURRENT_YEAR}`),
 ];
 
+// ── Person-transfer prefix patterns ─────────────────────────────────────────
+const PERSON_PREFIXES = [
+  'Transfer to ',
+  'Paid to ',
+  'Payment to ',
+  'Savings to ',
+];
+
+function extractPersonName(description: string): string | null {
+  for (const prefix of PERSON_PREFIXES) {
+    if (description.startsWith(prefix)) {
+      let name = description.slice(prefix.length).trim();
+      // Strip trailing parenthetical suffixes like "(1)", "(2)", "(medical)"
+      name = name.replace(/\s*\(\d+\)\s*$/, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+      // Skip if it looks like a service/business (all-caps long strings or known services)
+      const skipTerms = ['UPI', 'XXXXXXXX', 'savings account', 'ACCOUNT', 'SAVING'];
+      if (skipTerms.some(s => name.toLowerCase().includes(s.toLowerCase()))) return null;
+      // Skip very short or numeric names
+      if (name.length < 3 || /^\d+$/.test(name)) return null;
+      return name;
+    }
+  }
+  return null;
+}
+
+function getInitials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+// Avatar color palette for person cards
+const AVATAR_COLORS = [
+  '#6366F1', '#8B5CF6', '#EC4899', '#14B8A6', '#F59E0B',
+  '#10B981', '#3B82F6', '#EF4444', '#F97316', '#06B6D4',
+];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 export default function TransactionsScreen() {
   const insets = useSafeAreaInsets();
   const { transactions, deleteTransaction, updateTransaction } = useTransactions();
   const { toasts, showToast, removeToast } = useToast();
   const { showAlert } = useAlert();
 
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('All');
   const [monthFilter, setMonthFilter] = useState('All');
@@ -76,6 +133,63 @@ export default function TransactionsScreen() {
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [showPayPicker, setShowPayPicker] = useState(false);
   const [showSortPicker, setShowSortPicker] = useState(false);
+
+  // ── Scope transactions to selected month (for people view) ─────────────
+  const scopedTransactions = useMemo(() => {
+    if (monthFilter === 'All') return transactions;
+    const [mon, yr] = monthFilter.split(' ');
+    const monthIdx = MONTH_NAMES.indexOf(mon);
+    const year = parseInt(yr, 10);
+    return transactions.filter(tx => {
+      const d = parseDate(tx.date);
+      return d.getMonth() === monthIdx && d.getFullYear() === year;
+    });
+  }, [transactions, monthFilter]);
+
+  // ── Person groups computation ──────────────────────────────────────────
+  const personGroups = useMemo((): PersonGroup[] => {
+    const map = new Map<string, PersonGroup>();
+
+    for (const tx of scopedTransactions) {
+      const name = extractPersonName(tx.description);
+      if (!name) continue;
+
+      if (!map.has(name)) {
+        map.set(name, {
+          name,
+          total: 0,
+          count: 0,
+          lastDate: tx.date,
+          transactions: [],
+          category: tx.category,
+          type: tx.type,
+          initials: getInitials(name),
+        });
+      }
+      const group = map.get(name)!;
+      group.total += tx.amount;
+      group.count += 1;
+      group.transactions.push(tx);
+      // Keep most recent date
+      if (parseDate(tx.date).getTime() > parseDate(group.lastDate).getTime()) {
+        group.lastDate = tx.date;
+      }
+    }
+
+    // Filter by search in people view
+    let result = Array.from(map.values());
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(g => g.name.toLowerCase().includes(q));
+    }
+
+    return result.sort((a, b) => b.total - a.total);
+  }, [scopedTransactions, search]);
+
+  const peopleTotalSent = useMemo(
+    () => personGroups.reduce((s, g) => s + g.total, 0),
+    [personGroups],
+  );
 
   // ── Filtered + sorted list ─────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -188,7 +302,7 @@ export default function TransactionsScreen() {
   }, [transactions, showAlert]);
 
   // ── Row renderer (memoized for FlatList performance) ──────────────────
-  const renderItem = useCallback(({ item: tx, index }: { item: Transaction; index: number }) => {
+  const renderItem = useCallback(({ item: tx }: { item: Transaction }) => {
     const catColor = Colors.categories[tx.category];
     const modeColor = Colors.paymentModes[tx.paymentMode];
     const modeShort = tx.paymentMode === 'Bank Transfer' ? 'Bank'
@@ -200,7 +314,6 @@ export default function TransactionsScreen() {
       <View style={styles.txCard}>
         <View style={[styles.txAccent, { backgroundColor: catColor.dot }]} />
         <View style={styles.txMain}>
-          {/* Row 1: icon + desc + amount */}
           <View style={styles.txTopRow}>
             <View style={[styles.txIconInner, { backgroundColor: catColor.bg, borderColor: catColor.border }]}>
               <View style={[styles.txIconDot, { backgroundColor: catColor.dot }]} />
@@ -216,8 +329,6 @@ export default function TransactionsScreen() {
               </View>
             </View>
           </View>
-
-          {/* Row 2: badges + actions */}
           <View style={styles.txBotRow}>
             <View style={styles.txTags}>
               <CategoryBadge category={tx.category} size="xs" />
@@ -240,18 +351,88 @@ export default function TransactionsScreen() {
               </Pressable>
             </View>
           </View>
-
           {tx.notes ? (
-            <Text style={styles.txNotes} numberOfLines={1}>
-              {'💬 '}{tx.notes}
-            </Text>
+            <Text style={styles.txNotes} numberOfLines={1}>{'💬 '}{tx.notes}</Text>
           ) : null}
         </View>
       </View>
     );
   }, [handleEditOpen, handleDelete]);
 
+  // ── Person group renderer ──────────────────────────────────────────────
+  const renderPersonGroup = useCallback(({ item: group }: { item: PersonGroup }) => {
+    const avatarColor = getAvatarColor(group.name);
+    const isExpanded = expandedPerson === group.name;
+    const sortedTx = [...group.transactions].sort(
+      (a, b) => parseDate(b.date).getTime() - parseDate(a.date).getTime(),
+    );
+
+    return (
+      <View style={styles.personCard}>
+        <Pressable
+          style={({ pressed }) => [styles.personHeader, pressed && { opacity: 0.85 }]}
+          onPress={() => setExpandedPerson(isExpanded ? null : group.name)}
+        >
+          {/* Avatar */}
+          <View style={[styles.personAvatar, { backgroundColor: avatarColor + '22', borderColor: avatarColor + '55' }]}>
+            <Text style={[styles.personInitials, { color: avatarColor }]}>{group.initials}</Text>
+          </View>
+
+          {/* Info */}
+          <View style={styles.personInfo}>
+            <Text style={styles.personName} numberOfLines={1}>{group.name}</Text>
+            <View style={styles.personMeta}>
+              <View style={[styles.personCountBadge, { backgroundColor: avatarColor + '22' }]}>
+                <Text style={[styles.personCountTxt, { color: avatarColor }]}>
+                  {group.count} {group.count === 1 ? 'transfer' : 'transfers'}
+                </Text>
+              </View>
+              <Text style={styles.personLastDate}>Last: {formatDateDisplay(group.lastDate)}</Text>
+            </View>
+          </View>
+
+          {/* Amount + chevron */}
+          <View style={styles.personRight}>
+            <Text style={[styles.personTotal, { color: avatarColor }]}>{formatINR(group.total)}</Text>
+            <MaterialIcons
+              name={isExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+              size={18}
+              color={Colors.textMuted}
+            />
+          </View>
+        </Pressable>
+
+        {/* Expanded transaction list */}
+        {isExpanded && (
+          <View style={styles.personExpanded}>
+            <View style={styles.personDivider} />
+            {sortedTx.map((tx, i) => (
+              <View
+                key={tx.id}
+                style={[styles.personTxRow, i < sortedTx.length - 1 && styles.personTxBorder]}
+              >
+                <View style={styles.personTxLeft}>
+                  <Text style={styles.personTxDesc} numberOfLines={1}>{tx.description}</Text>
+                  <Text style={styles.personTxDate}>{formatDateDisplay(tx.date)}</Text>
+                </View>
+                <Text style={[styles.personTxAmt, { color: avatarColor }]}>{formatINR(tx.amount)}</Text>
+              </View>
+            ))}
+            {/* Subtotal bar */}
+            <View style={styles.personSubtotalRow}>
+              <Text style={styles.personSubtotalLbl}>Total sent</Text>
+              <Text style={[styles.personSubtotalAmt, { color: avatarColor }]}>{formatINR(group.total)}</Text>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }, [expandedPerson]);
+
   const keyExtractor = useCallback((item: Transaction) => item.id, []);
+  const personKeyExtractor = useCallback((item: PersonGroup) => item.name, []);
+
+  const scopeLabel = monthFilter === 'All' ? 'All Time' : monthFilter;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -260,16 +441,43 @@ export default function TransactionsScreen() {
         <View>
           <Text style={styles.pageTitle}>Transactions</Text>
           <Text style={styles.countLbl}>
-            {filtered.length} entries · {formatINR(totalFiltered)}
+            {viewMode === 'list'
+              ? `${filtered.length} entries · ${formatINR(totalFiltered)}`
+              : `${personGroups.length} people · ${formatINR(peopleTotalSent)} sent`}
           </Text>
         </View>
-        <Pressable
-          style={({ pressed }) => [styles.exportBtn, pressed && { opacity: 0.75 }]}
-          onPress={handleExportCSV}
-        >
-          <MaterialIcons name="file-download" size={14} color={Colors.accentLight} />
-          <Text style={styles.exportTxt}>CSV</Text>
-        </Pressable>
+        <View style={styles.headerRight}>
+          {/* View mode toggle */}
+          <View style={styles.viewToggle}>
+            <Pressable
+              style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
+              onPress={() => setViewMode('list')}
+            >
+              <MaterialIcons
+                name="list"
+                size={15}
+                color={viewMode === 'list' ? Colors.accentLight : Colors.textMuted}
+              />
+            </Pressable>
+            <Pressable
+              style={[styles.toggleBtn, viewMode === 'people' && styles.toggleBtnPeopleActive]}
+              onPress={() => { setViewMode('people'); setExpandedPerson(null); }}
+            >
+              <MaterialIcons
+                name="people"
+                size={15}
+                color={viewMode === 'people' ? '#fff' : Colors.textMuted}
+              />
+            </Pressable>
+          </View>
+          <Pressable
+            style={({ pressed }) => [styles.exportBtn, pressed && { opacity: 0.75 }]}
+            onPress={handleExportCSV}
+          >
+            <MaterialIcons name="file-download" size={14} color={Colors.accentLight} />
+            <Text style={styles.exportTxt}>CSV</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Search bar */}
@@ -279,7 +487,7 @@ export default function TransactionsScreen() {
           style={styles.searchInput}
           value={search}
           onChangeText={setSearch}
-          placeholder="Search by name, category, mode..."
+          placeholder={viewMode === 'people' ? 'Search by person name...' : 'Search by name, category, mode...'}
           placeholderTextColor={Colors.textMuted}
           returnKeyType="search"
         />
@@ -290,36 +498,48 @@ export default function TransactionsScreen() {
         ) : null}
       </View>
 
-      {/* Type filter + Sort */}
-      <View style={styles.filterRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-          <View style={styles.chipRow}>
-            {TYPE_FILTERS.map(t => {
-              const isActive = typeFilter === t;
-              const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
-              return (
-                <Pressable
-                  key={t}
-                  style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
-                  onPress={() => setTypeFilter(t)}
-                >
-                  {t !== 'All' && (
-                    <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
-                  )}
-                  <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </ScrollView>
-        <Pressable
-          style={({ pressed }) => [styles.sortBtn, pressed && { opacity: 0.7 }]}
-          onPress={() => setShowSortPicker(true)}
-        >
-          <MaterialIcons name="sort" size={14} color={Colors.accentLight} />
-          <Text style={styles.sortBtnTxt}>{SORT_OPTIONS.find(s => s.key === sort)?.label}</Text>
-        </Pressable>
-      </View>
+      {/* Type filter + Sort — only in list view */}
+      {viewMode === 'list' && (
+        <View style={styles.filterRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+            <View style={styles.chipRow}>
+              {TYPE_FILTERS.map(t => {
+                const isActive = typeFilter === t;
+                const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
+                return (
+                  <Pressable
+                    key={t}
+                    style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
+                    onPress={() => setTypeFilter(t)}
+                  >
+                    {t !== 'All' && (
+                      <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
+                    )}
+                    <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+          <Pressable
+            style={({ pressed }) => [styles.sortBtn, pressed && { opacity: 0.7 }]}
+            onPress={() => setShowSortPicker(true)}
+          >
+            <MaterialIcons name="sort" size={14} color={Colors.accentLight} />
+            <Text style={styles.sortBtnTxt}>{SORT_OPTIONS.find(s => s.key === sort)?.label}</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* People view info banner */}
+      {viewMode === 'people' && (
+        <View style={styles.peopleBanner}>
+          <MaterialIcons name="people-outline" size={14} color={Colors.accentLight} />
+          <Text style={styles.peopleBannerTxt}>
+            Person-to-person transfers · {scopeLabel} · tap a person to see breakdown
+          </Text>
+        </View>
+      )}
 
       {/* Month filter */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthScroll}>
@@ -342,27 +562,92 @@ export default function TransactionsScreen() {
         </View>
       </ScrollView>
 
-      {/* List */}
-      <FlatList
-        data={filtered}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 90 }]}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        maxToRenderPerBatch={12}
-        windowSize={10}
-        initialNumToRender={12}
-        ListEmptyComponent={() => (
-          <View style={styles.empty}>
-            <MaterialIcons name="search-off" size={48} color={Colors.textDim} />
-            <Text style={styles.emptyTitle}>No results</Text>
-            <Text style={styles.emptyText}>
-              {search ? 'Try different keywords' : 'Adjust filters to see transactions'}
-            </Text>
-          </View>
-        )}
-      />
+      {/* ── PEOPLE VIEW ── */}
+      {viewMode === 'people' ? (
+        <FlatList
+          data={personGroups}
+          keyExtractor={personKeyExtractor}
+          renderItem={renderPersonGroup}
+          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 90 }]}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          maxToRenderPerBatch={12}
+          windowSize={8}
+          initialNumToRender={10}
+          ListHeaderComponent={personGroups.length > 0 ? (
+            <View style={styles.peopleSummaryCard}>
+              <LinearGradient colors={['#0D1F38', '#111827']} style={styles.peopleSummaryGrad}>
+                <View style={styles.peopleSumRow}>
+                  <View style={styles.peopleSumItem}>
+                    <Text style={styles.peopleSumVal}>{personGroups.length}</Text>
+                    <Text style={styles.peopleSumLbl}>People</Text>
+                  </View>
+                  <View style={styles.peopleSumDiv} />
+                  <View style={styles.peopleSumItem}>
+                    <Text style={[styles.peopleSumVal, { color: Colors.dangerLight }]}>
+                      {formatINR(peopleTotalSent)}
+                    </Text>
+                    <Text style={styles.peopleSumLbl}>Total Sent</Text>
+                  </View>
+                  <View style={styles.peopleSumDiv} />
+                  <View style={styles.peopleSumItem}>
+                    <Text style={styles.peopleSumVal}>
+                      {formatINR(Math.round(peopleTotalSent / Math.max(1, personGroups.length)))}
+                    </Text>
+                    <Text style={styles.peopleSumLbl}>Avg / Person</Text>
+                  </View>
+                </View>
+                {/* Top recipient highlight */}
+                {personGroups[0] && (
+                  <View style={styles.topRecipientRow}>
+                    <MaterialIcons name="local-fire-department" size={13} color={Colors.accentLight} />
+                    <Text style={styles.topRecipientTxt}>
+                      Top recipient: <Text style={{ color: Colors.accentLight, fontWeight: FontWeight.bold }}>
+                        {personGroups[0].name}
+                      </Text> · {formatINR(personGroups[0].total)}
+                    </Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </View>
+          ) : null}
+          ListEmptyComponent={() => (
+            <View style={styles.empty}>
+              <MaterialIcons name="people-outline" size={48} color={Colors.textDim} />
+              <Text style={styles.emptyTitle}>No person transfers found</Text>
+              <Text style={styles.emptyText}>
+                {search
+                  ? 'No one matches that name'
+                  : monthFilter !== 'All'
+                    ? `No transfers to individuals in ${monthFilter}`
+                    : 'Transfers starting with "Transfer to" or "Paid to" appear here'}
+              </Text>
+            </View>
+          )}
+        />
+      ) : (
+        /* ── LIST VIEW ── */
+        <FlatList
+          data={filtered}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 90 }]}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          maxToRenderPerBatch={12}
+          windowSize={10}
+          initialNumToRender={12}
+          ListEmptyComponent={() => (
+            <View style={styles.empty}>
+              <MaterialIcons name="search-off" size={48} color={Colors.textDim} />
+              <Text style={styles.emptyTitle}>No results</Text>
+              <Text style={styles.emptyText}>
+                {search ? 'Try different keywords' : 'Adjust filters to see transactions'}
+              </Text>
+            </View>
+          )}
+        />
+      )}
 
       {/* Edit Modal */}
       <Modal visible={editingTx !== null} transparent animationType="slide" onRequestClose={() => setEditingTx(null)}>
@@ -442,7 +727,7 @@ export default function TransactionsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Sub-pickers inside edit modal */}
+      {/* Sub-pickers */}
       <Modal visible={showCatPicker} transparent animationType="slide" onRequestClose={() => setShowCatPicker(false)}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowCatPicker(false)}>
           <View style={styles.editSheet}>
@@ -491,7 +776,6 @@ export default function TransactionsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Sort picker */}
       <Modal visible={showSortPicker} transparent animationType="slide" onRequestClose={() => setShowSortPicker(false)}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowSortPicker(false)}>
           <View style={styles.editSheet}>
@@ -544,6 +828,30 @@ const styles = StyleSheet.create({
   },
   pageTitle: { fontSize: FontSize.xxl, fontWeight: FontWeight.heavy, color: Colors.textPrimary },
   countLbl: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 2 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+
+  // View toggle
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  toggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleBtnActive: {
+    backgroundColor: Colors.accentDim + '55',
+  },
+  toggleBtnPeopleActive: {
+    backgroundColor: '#6366F1',
+  },
+
   exportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -613,6 +921,22 @@ const styles = StyleSheet.create({
   },
   sortBtnTxt: { fontSize: FontSize.xs, color: Colors.accentLight, fontWeight: FontWeight.bold },
 
+  // People banner
+  peopleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: Spacing.md,
+    marginBottom: 4,
+    backgroundColor: '#6366F1' + '18',
+    borderRadius: Radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#6366F1' + '33',
+  },
+  peopleBannerTxt: { fontSize: FontSize.xs, color: Colors.textMuted, flex: 1 },
+
   monthScroll: { marginBottom: Spacing.xs },
   monthChip: {
     paddingHorizontal: 10,
@@ -625,6 +949,103 @@ const styles = StyleSheet.create({
   monthChipTxt: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: FontWeight.semibold },
 
   listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4 },
+
+  // ── Person group card ──────────────────────────────────────────────────
+  peopleSummaryCard: { marginBottom: Spacing.sm },
+  peopleSummaryGrad: {
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 10,
+  },
+  peopleSumRow: { flexDirection: 'row', alignItems: 'center' },
+  peopleSumItem: { flex: 1, alignItems: 'center', gap: 3 },
+  peopleSumVal: { fontSize: FontSize.md, fontWeight: FontWeight.heavy, color: Colors.textPrimary },
+  peopleSumLbl: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  peopleSumDiv: { width: 1, height: 28, backgroundColor: Colors.border },
+  topRecipientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.accentDim + '33',
+    borderRadius: Radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.accent + '33',
+  },
+  topRecipientTxt: { fontSize: FontSize.xs, color: Colors.textSecondary, flex: 1 },
+
+  personCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+    ...Shadow.sm,
+  },
+  personHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    gap: 12,
+  },
+  personAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  personInitials: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.heavy,
+  },
+  personInfo: { flex: 1, gap: 5 },
+  personName: {
+    fontSize: FontSize.body,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+  },
+  personMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  personCountBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: Radius.full,
+  },
+  personCountTxt: { fontSize: FontSize.xs, fontWeight: FontWeight.bold },
+  personLastDate: { fontSize: FontSize.xs, color: Colors.textMuted },
+  personRight: { alignItems: 'flex-end', gap: 4 },
+  personTotal: { fontSize: FontSize.md, fontWeight: FontWeight.heavy },
+
+  // Expanded breakdown
+  personExpanded: { paddingHorizontal: 14, paddingBottom: 14 },
+  personDivider: { height: 1, backgroundColor: Colors.border, marginBottom: 10 },
+  personTxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    gap: 10,
+  },
+  personTxBorder: { borderBottomWidth: 1, borderBottomColor: Colors.border },
+  personTxLeft: { flex: 1, gap: 2 },
+  personTxDesc: { fontSize: FontSize.sm, color: Colors.textPrimary, fontWeight: FontWeight.medium },
+  personTxDate: { fontSize: FontSize.xs, color: Colors.textMuted },
+  personTxAmt: { fontSize: FontSize.sm, fontWeight: FontWeight.heavy },
+  personSubtotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  personSubtotalLbl: { fontSize: FontSize.sm, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  personSubtotalAmt: { fontSize: FontSize.md, fontWeight: FontWeight.heavy },
 
   // Transaction card
   txCard: {
