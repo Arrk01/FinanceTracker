@@ -22,10 +22,12 @@ const CATEGORY_SHORT: Record<Category, string> = {
   'Lifestyle Enjoyment': 'Fun',
 };
 
-const TYPE_ICONS: Record<TransactionType, string> = {
+const TYPE_ICONS: Record<string, string> = {
   Need: '⚡',
   Want: '✦',
   Saving: '◈',
+  Transfer: '⇄',
+  CardPayment: '💳',
 };
 
 export const CategoryBadge = React.memo(({ category, size = 'md', showDot = true }: CategoryBadgeProps) => {
@@ -70,8 +72,18 @@ export const CategoryBadge = React.memo(({ category, size = 'md', showDot = true
 });
 
 export const TypeBadge = React.memo(({ type, size = 'md' }: TypeBadgeProps) => {
-  const colors = Colors.types[type];
+  // Graceful fallback for Transfer / CardPayment types
+  const knownTypes = ['Need', 'Want', 'Saving'] as const;
+  const isKnown = knownTypes.includes(type as typeof knownTypes[number]);
+  const colors = isKnown ? Colors.types[type as 'Need' | 'Want' | 'Saving'] : {
+    bg: Colors.surfaceElevated,
+    border: Colors.border,
+    text: Colors.textMuted,
+    dot: Colors.textMuted,
+  };
   const isSM = size === 'sm' || size === 'xs';
+  const icon = TYPE_ICONS[type] ?? '○';
+  const label = type === 'CardPayment' ? 'Card Pay' : type;
 
   return (
     <View
@@ -86,7 +98,7 @@ export const TypeBadge = React.memo(({ type, size = 'md' }: TypeBadgeProps) => {
       ]}
     >
       <Text style={[styles.typeIcon, { fontSize: isSM ? 8 : 10 }]}>
-        {TYPE_ICONS[type]}
+        {icon}
       </Text>
       <Text
         style={[
@@ -94,7 +106,7 @@ export const TypeBadge = React.memo(({ type, size = 'md' }: TypeBadgeProps) => {
           { color: colors.text, fontSize: isSM ? FontSize.xs : FontSize.sm, letterSpacing: 0.2 },
         ]}
       >
-        {type}
+        {label}
       </Text>
     </View>
   );

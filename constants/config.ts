@@ -12,7 +12,9 @@ export type PaymentMode =
   | 'Cash'
   | 'Bank Transfer';
 
-export type TransactionType = 'Need' | 'Want' | 'Saving';
+export type TransactionType = 'Need' | 'Want' | 'Saving' | 'Transfer' | 'CardPayment';
+
+export type AccountType = 'bank' | 'card' | 'cash';
 
 export interface Transaction {
   id: string;
@@ -23,6 +25,14 @@ export interface Transaction {
   paymentMode: PaymentMode;
   type: TransactionType;
   notes: string;
+  // Account linking (optional — old records without these still work)
+  accountId?: string;
+  accountType?: AccountType;
+  // Transfer-specific fields
+  toAccountId?: string;
+  toAccountType?: AccountType;
+  // Income flag
+  isIncome?: boolean;
 }
 
 export const CATEGORIES: Category[] = [

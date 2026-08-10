@@ -44,7 +44,10 @@ export default function DashboardScreen() {
   const monthlyTransactions = useMemo(() =>
     transactions.filter(tx => {
       const d = parseDate(tx.date);
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      const inMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      // Exclude transfers and card payments from spend analytics to prevent double-counting
+      const isRealSpend = tx.type !== 'Transfer' && tx.type !== ('CardPayment' as string) && !tx.isIncome;
+      return inMonth && isRealSpend;
     }),
     [transactions, currentMonth, currentYear],
   );

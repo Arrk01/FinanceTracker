@@ -48,10 +48,13 @@ export default function AnalyticsScreen() {
   const sel = AVAILABLE_MONTHS[selectedIdx] ?? AVAILABLE_MONTHS[3];
 
   // ── Monthly transactions for selected month ────────────────────────────
+  // Exclude Transfer and CardPayment types to prevent double-counting in analytics
   const monthlyTx = useMemo(() =>
     transactions.filter(tx => {
       const d = parseDate(tx.date);
-      return d.getMonth() === sel.month && d.getFullYear() === sel.year;
+      const inMonth = d.getMonth() === sel.month && d.getFullYear() === sel.year;
+      const isRealSpend = tx.type !== 'Transfer' && tx.type !== 'CardPayment' && !tx.isIncome;
+      return inMonth && isRealSpend;
     }),
     [transactions, sel],
   );
@@ -111,7 +114,9 @@ export default function AnalyticsScreen() {
       const total = transactions
         .filter(tx => {
           const d = parseDate(tx.date);
-          return d.getMonth() === m.month && d.getFullYear() === m.year;
+          const inMonth = d.getMonth() === m.month && d.getFullYear() === m.year;
+          const isRealSpend = tx.type !== 'Transfer' && tx.type !== 'CardPayment' && !tx.isIncome;
+          return inMonth && isRealSpend;
         })
         .reduce((sum, tx) => sum + Math.max(0, tx.amount), 0);
       return {

@@ -3,7 +3,7 @@ import { Transaction, CATEGORY_TYPE_MAP } from '@/constants/config';
 
 const STORAGE_KEY = 'finance_transactions';
 const STORAGE_VERSION_KEY = 'finance_data_version';
-const CURRENT_VERSION = 'v4_may2026'; // bump this to force reload with new data
+const CURRENT_VERSION = 'v5_may2026_accountlinked'; // bump this to force reload with new data
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
