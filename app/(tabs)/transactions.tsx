@@ -501,25 +501,23 @@ export default function TransactionsScreen() {
       {/* Type filter + Sort — only in list view */}
       {viewMode === 'list' && (
         <View style={styles.filterRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-            <View style={styles.chipRow}>
-              {TYPE_FILTERS.map(t => {
-                const isActive = typeFilter === t;
-                const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
-                return (
-                  <Pressable
-                    key={t}
-                    style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
-                    onPress={() => setTypeFilter(t)}
-                  >
-                    {t !== 'All' && (
-                      <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
-                    )}
-                    <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {TYPE_FILTERS.map(t => {
+              const isActive = typeFilter === t;
+              const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
+              return (
+                <Pressable
+                  key={t}
+                  style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
+                  onPress={() => setTypeFilter(t)}
+                >
+                  {t !== 'All' && (
+                    <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
+                  )}
+                  <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
+                </Pressable>
+              );
+            })}
           </ScrollView>
           <Pressable
             style={({ pressed }) => [styles.sortBtn, pressed && { opacity: 0.7 }]}
@@ -542,24 +540,27 @@ export default function TransactionsScreen() {
       )}
 
       {/* Month filter */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthScroll}>
-        <View style={styles.chipRow}>
-          {MONTH_FILTERS.map(m => {
-            const isActive = monthFilter === m;
-            return (
-              <Pressable
-                key={m}
-                style={[
-                  styles.monthChip,
-                  isActive && { backgroundColor: Colors.accent + '22', borderColor: Colors.accent + '66' },
-                ]}
-                onPress={() => setMonthFilter(m)}
-              >
-                <Text style={[styles.monthChipTxt, isActive && { color: Colors.accentLight }]}>{m}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.monthScroll}
+        contentContainerStyle={styles.monthChipRow}
+      >
+        {MONTH_FILTERS.map(m => {
+          const isActive = monthFilter === m;
+          return (
+            <Pressable
+              key={m}
+              style={[
+                styles.monthChip,
+                isActive && { backgroundColor: Colors.accent + '22', borderColor: Colors.accent + '66' },
+              ]}
+              onPress={() => setMonthFilter(m)}
+            >
+              <Text style={[styles.monthChipTxt, isActive && { color: Colors.accentLight }]}>{m}</Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
       {/* ── PEOPLE VIEW ── */}
@@ -890,6 +891,7 @@ const styles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.md,
+    paddingRight: Spacing.sm,
     gap: 7,
     alignItems: 'center',
     paddingVertical: 4,
@@ -937,7 +939,15 @@ const styles = StyleSheet.create({
   },
   peopleBannerTxt: { fontSize: FontSize.xs, color: Colors.textMuted, flex: 1 },
 
-  monthScroll: { marginBottom: Spacing.xs },
+  monthScroll: { marginBottom: Spacing.xs, flexGrow: 0 },
+  monthChipRow: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.md,
+    paddingRight: Spacing.md,
+    gap: 7,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
   monthChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -948,7 +958,7 @@ const styles = StyleSheet.create({
   },
   monthChipTxt: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: FontWeight.semibold },
 
-  listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4 },
+  listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4, flexGrow: 1 },
 
   // ── Person group card ──────────────────────────────────────────────────
   peopleSummaryCard: { marginBottom: Spacing.sm },
