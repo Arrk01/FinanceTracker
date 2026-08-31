@@ -191,49 +191,53 @@ export interface FinancialInsight {
 }
 
 export function generateInsights(params: {
+  salary: number;
   totalSpent: number;
   needs: number;
   wants: number;
   savings: number;
   weeklySpend: number;
+  weeklyLimit: number;
   topCategory: string;
   txCount: number;
   avgDaily: number;
 }): FinancialInsight[] {
-  const { totalSpent, needs, wants, savings, weeklySpend, topCategory, txCount, avgDaily } = params;
+  const { salary, totalSpent, needs, wants, savings, weeklySpend, weeklyLimit, topCategory, txCount, avgDaily } = params;
   const insights: FinancialInsight[] = [];
-  const salary = BUDGET_CONFIG.salary;
+  const needsLimit = Math.round(salary * 0.5);
+  const wantsLimit = Math.round(salary * 0.3);
+  const savingsGoal = Math.round(salary * 0.2);
 
   // Over budget warnings
-  if (needs > BUDGET_CONFIG.needs) {
+  if (needs > needsLimit) {
     insights.push({
       type: 'warning',
       title: 'Needs Over Budget',
-      message: `Needs spending (${formatINR(needs)}) exceeds 50% limit by ${formatINR(needs - BUDGET_CONFIG.needs)}.`,
+      message: `Needs spending (${formatINR(needs)}) exceeds 50% limit by ${formatINR(needs - needsLimit)}.`,
       icon: 'warning',
     });
   }
-  if (wants > BUDGET_CONFIG.wants) {
+  if (wants > wantsLimit) {
     insights.push({
       type: 'warning',
       title: 'Wants Over Budget',
-      message: `Discretionary spending is ${formatINR(wants - BUDGET_CONFIG.wants)} over the 30% limit.`,
+      message: `Discretionary spending is ${formatINR(wants - wantsLimit)} over the 30% limit.`,
       icon: 'trending-up',
     });
   }
 
   // Weekly over
-  if (weeklySpend > BUDGET_CONFIG.weeklyLimit) {
+  if (weeklySpend > weeklyLimit) {
     insights.push({
       type: 'warning',
       title: 'Weekly Limit Breached',
-      message: `This week you spent ${formatINR(weeklySpend)} — ${formatINR(weeklySpend - BUDGET_CONFIG.weeklyLimit)} over the ₹10,000 limit.`,
+      message: `This week you spent ${formatINR(weeklySpend)} — ${formatINR(weeklySpend - weeklyLimit)} over the ${formatINR(weeklyLimit)} limit.`,
       icon: 'date-range',
     });
   }
 
   // Good savings
-  if (savings >= BUDGET_CONFIG.savings) {
+  if (savings >= savingsGoal) {
     insights.push({
       type: 'success',
       title: 'Savings Goal Met',
@@ -244,7 +248,7 @@ export function generateInsights(params: {
     insights.push({
       type: 'tip',
       title: 'Boost Savings',
-      message: `Save ${formatINR(BUDGET_CONFIG.savings - savings)} more to hit the 20% savings target this month.`,
+      message: `Save ${formatINR(savingsGoal - savings)} more to hit the 20% savings target (${formatINR(savingsGoal)}) this month.`,
       icon: 'lightbulb',
     });
   }

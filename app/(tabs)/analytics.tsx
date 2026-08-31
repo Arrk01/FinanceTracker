@@ -6,6 +6,11 @@ import {
   StyleSheet,
   Pressable,
   Dimensions,
+  Modal,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,13 +19,13 @@ import { Colors, Spacing, FontSize, FontWeight, Radius, Shadow } from '@/constan
 import {
   formatINR,
   parseDate,
-  BUDGET_CONFIG,
   CATEGORIES,
   PAYMENT_MODES,
   MONTH_NAMES,
   getBudgetGrade,
 } from '@/constants/config';
 import { useTransactions } from '@/hooks/useTransactions';
+import { useSalary } from '@/hooks/useSalary';
 import { PieChart, BarChart } from 'react-native-gifted-charts';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -38,17 +43,36 @@ const AVAILABLE_MONTHS = [
 export default function AnalyticsScreen() {
   const insets = useSafeAreaInsets();
   const { transactions } = useTransactions();
+  const { getSalary, setSalary } = useSalary();
 
   const now = new Date();
   const defaultIdx = AVAILABLE_MONTHS.findIndex(
     m => m.month === now.getMonth() && m.year === now.getFullYear(),
   );
   const [selectedIdx, setSelectedIdx] = useState(defaultIdx >= 0 ? defaultIdx : 3);
+  const [showSalaryModal, setShowSalaryModal] = useState(false);
+  const [salaryInput, setSalaryInput] = useState('');
 
   const sel = AVAILABLE_MONTHS[selectedIdx] ?? AVAILABLE_MONTHS[3];
 
-  // ── Monthly transactions for selected month ────────────────────────────
-  // Exclude Transfer and CardPayment types to prevent double-counting in analytics
+  // ── Per-month salary ───────────────────────────────────────────────────
+  const salary = getSalary(sel.year, sel.month);
+  const needsLimit   = Math.round(salary * 0.50);
+  const wantsLimit   = Math.round(salary * 0.30);
+  const savingsLimit = Math.round(salary * 0.20);
+
+  const openSalaryModal = () => {
+    setSalaryInput(salary.toString());
+    setShowSalaryModal(true);
+  };
+
+  const handleSaveSalary = async () => {
+    const val = parseFloat(salaryInput.replace(/,/g, ''));
+    if (isFinite(val) && val > 0) await setSalary(sel.year, sel.month, val);
+    setShowSalaryModal(false);
+  };
+
+  // ── Monthly transactions ────────────────────────────────────────────────
   const monthlyTx = useMemo(() =>
     transactions.filter(tx => {
       const d = parseDate(tx.date);
@@ -59,7 +83,7 @@ export default function AnalyticsScreen() {
     [transactions, sel],
   );
 
-  // ── Totals (single pass) ───────────────────────────────────────────────
+  // ── Totals ─────────────────────────────────────────────────────────────
   const totals = useMemo(() => {
     let needs = 0, wants = 0, savings = 0, total = 0;
     for (const tx of monthlyTx) {
@@ -102,13 +126,13 @@ export default function AnalyticsScreen() {
       .sort((a, b) => b.amount - a.amount);
   }, [monthlyTx, totals.total]);
 
-  // ── Top 5 biggest expenses ─────────────────────────────────────────────
+  // ── Top 5 ──────────────────────────────────────────────────────────────
   const top5 = useMemo(() =>
     [...monthlyTx].sort((a, b) => b.amount - a.amount).slice(0, 5),
     [monthlyTx],
   );
 
-  // ── Month-over-month bar chart data ────────────────────────────────────
+  // ── MoM bar chart ──────────────────────────────────────────────────────
   const momData = useMemo(() =>
     AVAILABLE_MONTHS.map((m, i) => {
       const total = transactions
@@ -124,12 +148,7 @@ export default function AnalyticsScreen() {
         value: total,
         frontColor: i === selectedIdx ? Colors.accentLight : Colors.primary + '99',
         topLabelComponent: () => (
-          <Text style={{
-            fontSize: 9,
-            color: i === selectedIdx ? Colors.accentLight : Colors.textMuted,
-            marginBottom: 3,
-            fontWeight: '700',
-          }}>
+          <Text style={{ fontSize: 9, color: i === selectedIdx ? Colors.accentLight : Colors.textMuted, marginBottom: 3, fontWeight: '700' }}>
             {total > 0 ? `${(total / 1000).toFixed(0)}k` : ''}
           </Text>
         ),
@@ -138,334 +157,374 @@ export default function AnalyticsScreen() {
     [transactions, selectedIdx],
   );
 
-  // ── Derived ratios ─────────────────────────────────────────────────────
-  const needsPct = totals.total > 0 ? Math.round((totals.needs / totals.total) * 100) : 0;
-  const wantsPct = totals.total > 0 ? Math.round((totals.wants / totals.total) * 100) : 0;
-  const savingsPct = totals.total > 0 ? Math.round((totals.savings / totals.total) * 100) : 0;
-  const savingRate = Math.round((totals.savings / BUDGET_CONFIG.salary) * 100);
-  const needsVsBudgetPct = Math.round((totals.needs / BUDGET_CONFIG.needs) * 100);
-  const wantsVsBudgetPct = Math.round((totals.wants / BUDGET_CONFIG.wants) * 100);
-  const grade = getBudgetGrade(needsPct, wantsPct, savingsPct);
+  // ── Derived ────────────────────────────────────────────────────────────
+  const needsPct    = totals.total > 0 ? Math.round((totals.needs / totals.total) * 100) : 0;
+  const wantsPct    = totals.total > 0 ? Math.round((totals.wants / totals.total) * 100) : 0;
+  const savingsPct  = totals.total > 0 ? Math.round((totals.savings / totals.total) * 100) : 0;
+  const savingRate  = Math.round((totals.savings / salary) * 100);
+  const needsVsPct  = Math.round((totals.needs / Math.max(1, needsLimit)) * 100);
+  const wantsVsPct  = Math.round((totals.wants / Math.max(1, wantsLimit)) * 100);
+  const grade       = getBudgetGrade(needsPct, wantsPct, savingsPct);
 
-  const piePayData = payBreakdown.map(p => ({
-    value: p.amount,
-    color: p.color,
-    text: `${p.pct}%`,
-  }));
-
-  const catPieData = catBreakdown.map(c => ({
-    value: c.amount,
-    color: c.color,
-  }));
+  const piePayData = payBreakdown.map(p => ({ value: p.amount, color: p.color, text: `${p.pct}%` }));
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: insets.top + Spacing.sm, paddingBottom: insets.bottom + 90 },
-      ]}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.pageTitle}>Analytics</Text>
-        <Text style={styles.pageSub}>Deep spending insights</Text>
-      </View>
-
-      {/* Month selector */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={styles.monthRow}>
-          {AVAILABLE_MONTHS.map((m, i) => (
-            <Pressable
-              key={m.label}
-              style={({ pressed }) => [
-                styles.monthBtn,
-                selectedIdx === i && styles.monthBtnActive,
-                pressed && { opacity: 0.8 },
-              ]}
-              onPress={() => setSelectedIdx(i)}
-            >
-              {selectedIdx === i && (
-                <LinearGradient
-                  colors={[Colors.accentDim + 'CC', Colors.accent + '33']}
-                  style={StyleSheet.absoluteFillObject}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                />
-              )}
-              <Text style={[styles.monthBtnTxt, selectedIdx === i && styles.monthBtnTxtActive]}>
-                {m.label}
-              </Text>
-            </Pressable>
-          ))}
+    <>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.sm, paddingBottom: insets.bottom + 90 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.pageTitle}>Analytics</Text>
+          <Text style={styles.pageSub}>Deep spending insights</Text>
         </View>
+
+        {/* Month selector + salary pill */}
+        <View style={styles.monthSelectorRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+            <View style={styles.monthRow}>
+              {AVAILABLE_MONTHS.map((m, i) => (
+                <Pressable
+                  key={m.label}
+                  style={({ pressed }) => [styles.monthBtn, selectedIdx === i && styles.monthBtnActive, pressed && { opacity: 0.8 }]}
+                  onPress={() => setSelectedIdx(i)}
+                >
+                  {selectedIdx === i && (
+                    <LinearGradient
+                      colors={[Colors.accentDim + 'CC', Colors.accent + '33']}
+                      style={StyleSheet.absoluteFillObject}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                    />
+                  )}
+                  <Text style={[styles.monthBtnTxt, selectedIdx === i && styles.monthBtnTxtActive]}>{m.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+          {/* Tappable salary pill */}
+          <Pressable
+            style={({ pressed }) => [styles.salaryPill, pressed && { opacity: 0.75 }]}
+            onPress={openSalaryModal}
+          >
+            <MaterialIcons name="account-balance" size={10} color={Colors.accentLight} />
+            <Text style={styles.salaryPillTxt}>{formatINR(salary)}</Text>
+            <MaterialIcons name="edit" size={9} color={Colors.accent + 'CC'} />
+          </Pressable>
+        </View>
+
+        {monthlyTx.length === 0 ? (
+          <View style={styles.empty}>
+            <MaterialIcons name="bar-chart" size={56} color={Colors.textDim} />
+            <Text style={styles.emptyTitle}>No data for {sel.label}</Text>
+            <Text style={styles.emptyText}>Add transactions to see analytics</Text>
+          </View>
+        ) : (
+          <>
+            {/* Summary hero */}
+            <LinearGradient colors={['#0D1F38', '#111827']} style={styles.summaryCard}>
+              <View style={styles.summaryRow}>
+                <SumItem label="Total Spent" value={formatINR(totals.total)} color={Colors.dangerLight} />
+                <View style={styles.sumDiv} />
+                <SumItem label="Needs" value={formatINR(totals.needs)} color={totals.needs > needsLimit ? Colors.dangerLight : Colors.successLight} />
+                <View style={styles.sumDiv} />
+                <SumItem label="Wants" value={formatINR(totals.wants)} color={totals.wants > wantsLimit ? Colors.dangerLight : Colors.warningLight} />
+                <View style={styles.sumDiv} />
+                <SumItem label="Saved" value={formatINR(totals.savings)} color={Colors.primaryLight} />
+              </View>
+              <View style={styles.savingRateRow}>
+                <Text style={styles.savingRateLbl}>Saving Rate</Text>
+                <Text style={[styles.savingRateVal, { color: savingRate >= 20 ? Colors.successLight : savingRate >= 10 ? Colors.warningLight : Colors.dangerLight }]}>
+                  {savingRate}%
+                </Text>
+                <Text style={styles.savingRateSub}>of {formatINR(salary)} salary</Text>
+              </View>
+            </LinearGradient>
+
+            {/* Budget health grade */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <MaterialIcons name="military-tech" size={18} color={Colors.accentLight} />
+                <Text style={styles.cardTitle}>Budget Health Score</Text>
+                <View style={[styles.scoreBadge, { backgroundColor: grade.color + '22', borderColor: grade.color + '55' }]}>
+                  <Text style={[styles.scoreBadgeTxt, { color: grade.color }]}>Score: {grade.score}/100</Text>
+                </View>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.gradeRow}>
+                <View style={styles.gradeLeft}>
+                  <Text style={styles.gradeDesc}>50 : 30 : 20 rule alignment · Salary {formatINR(salary)}</Text>
+                  <View style={styles.gradeRatioRow}>
+                    {[
+                      { label: 'Need', val: needsPct, target: 50, color: Colors.success },
+                      { label: 'Want', val: wantsPct, target: 30, color: Colors.warning },
+                      { label: 'Save', val: savingsPct, target: 20, color: Colors.primaryLight },
+                    ].map(r => (
+                      <View key={r.label} style={styles.ratioItem}>
+                        <Text style={[styles.ratioVal, { color: r.color }]}>{r.val}%</Text>
+                        <Text style={styles.ratioLbl}>{r.label}</Text>
+                        <Text style={styles.ratioTarget}>goal {r.target}%</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <View style={styles.vsRow}>
+                    <View style={[styles.vsChip, { backgroundColor: needsVsPct > 100 ? Colors.dangerDim + '88' : Colors.successDim + '88', borderColor: needsVsPct > 100 ? Colors.danger + '55' : Colors.success + '55' }]}>
+                      <Text style={[styles.vsTxt, { color: needsVsPct > 100 ? Colors.dangerLight : Colors.successLight }]}>
+                        Needs {needsVsPct}% of {formatINR(needsLimit)}
+                      </Text>
+                    </View>
+                    <View style={[styles.vsChip, { backgroundColor: wantsVsPct > 100 ? Colors.dangerDim + '88' : Colors.successDim + '88', borderColor: wantsVsPct > 100 ? Colors.danger + '55' : Colors.success + '55' }]}>
+                      <Text style={[styles.vsTxt, { color: wantsVsPct > 100 ? Colors.dangerLight : Colors.successLight }]}>
+                        Wants {wantsVsPct}% of {formatINR(wantsLimit)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={[styles.gradeCircle, { borderColor: grade.color, ...Shadow.glow(grade.color) }]}>
+                  <Text style={[styles.gradeText, { color: grade.color }]}>{grade.grade}</Text>
+                  <Text style={[styles.gradeLbl, { color: grade.color + 'BB' }]}>{grade.label}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* MoM bar chart */}
+            {momData.filter(d => d.value > 0).length > 1 && (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <MaterialIcons name="bar-chart" size={18} color={Colors.accentLight} />
+                  <Text style={styles.cardTitle}>Monthly Trend</Text>
+                </View>
+                <View style={styles.divider} />
+                <BarChart
+                  data={momData}
+                  width={CHART_W}
+                  height={160}
+                  barWidth={Math.max(26, Math.floor(CHART_W / momData.length) - 18)}
+                  barBorderRadius={7}
+                  noOfSections={4}
+                  yAxisColor={Colors.border}
+                  xAxisColor={Colors.border}
+                  yAxisTextStyle={{ color: Colors.textMuted, fontSize: 9 }}
+                  xAxisLabelTextStyle={{ color: Colors.textMuted, fontSize: 10, fontWeight: '700' }}
+                  hideRules
+                  isAnimated
+                  showGradient
+                  gradientColor={Colors.primaryDim + '55'}
+                  backgroundColor="transparent"
+                  xAxisThickness={1}
+                  yAxisThickness={0}
+                  spacing={10}
+                />
+              </View>
+            )}
+
+            {/* Category breakdown table */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <MaterialIcons name="category" size={18} color={Colors.accentLight} />
+                <Text style={styles.cardTitle}>Category Breakdown</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.tableHead}>
+                <Text style={[styles.th, { flex: 2 }]}>Category</Text>
+                <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>Amount</Text>
+                <Text style={[styles.th, { width: 48, textAlign: 'right' }]}>%</Text>
+              </View>
+              {catBreakdown.map((item, i) => (
+                <View key={item.cat} style={[styles.tableRow, i % 2 === 1 && styles.tableRowAlt]}>
+                  <View style={[styles.catRowLeft, { flex: 2 }]}>
+                    <View style={[styles.catColorBar, { backgroundColor: item.color }]} />
+                    <Text style={styles.tdText} numberOfLines={1}>{item.cat.split(' ')[0] + ' ' + (item.cat.split(' ')[1] || '')}</Text>
+                  </View>
+                  <Text style={[styles.tdBold, { flex: 1, textAlign: 'right' }]}>{formatINR(item.amount)}</Text>
+                  <View style={{ width: 48, alignItems: 'flex-end' }}>
+                    <View style={[styles.pctBadge, { backgroundColor: item.color + '22' }]}>
+                      <Text style={[styles.pctTxt, { color: item.color }]}>{Math.round(item.pct)}%</Text>
+                    </View>
+                  </View>
+                </View>
+              ))}
+              <View style={[styles.tableRow, { borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 4 }]}>
+                <Text style={[styles.tdBold, { flex: 2, color: Colors.textPrimary }]}>Total</Text>
+                <Text style={[styles.tdBold, { flex: 1, textAlign: 'right', color: Colors.dangerLight }]}>{formatINR(totals.total)}</Text>
+                <Text style={[styles.tdBold, { width: 48, textAlign: 'right' }]}>100%</Text>
+              </View>
+            </View>
+
+            {/* Payment mode split */}
+            {piePayData.length > 0 && (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <MaterialIcons name="credit-card" size={18} color={Colors.accentLight} />
+                  <Text style={styles.cardTitle}>Payment Mode Split</Text>
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.payRow}>
+                  <PieChart
+                    data={piePayData}
+                    donut
+                    radius={76}
+                    innerRadius={46}
+                    innerCircleColor={Colors.surface}
+                    strokeColor={Colors.background}
+                    strokeWidth={2}
+                    centerLabelComponent={() => (
+                      <Text style={{ fontSize: 9, color: Colors.textMuted, textAlign: 'center' }}>
+                        {payBreakdown.length}{'\n'}modes
+                      </Text>
+                    )}
+                  />
+                  <View style={styles.payLegend}>
+                    {payBreakdown.map(p => (
+                      <View key={p.mode} style={styles.payLegendRow}>
+                        <View style={[styles.payDot, { backgroundColor: p.color }]} />
+                        <Text style={styles.payMode} numberOfLines={1}>{p.mode}</Text>
+                        <Text style={[styles.payAmt, { color: p.color }]}>{formatINR(p.amount)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Top 5 biggest */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <MaterialIcons name="local-fire-department" size={18} color={Colors.dangerLight} />
+                <Text style={styles.cardTitle}>Biggest Expenses</Text>
+              </View>
+              <View style={styles.divider} />
+              {top5.map((tx, i) => {
+                const pctOfTotal = totals.total > 0 ? Math.round((tx.amount / totals.total) * 100) : 0;
+                return (
+                  <View key={tx.id} style={[styles.top5Row, i < top5.length - 1 && styles.top5Border]}>
+                    <LinearGradient
+                      colors={i === 0 ? [Colors.accentDim + 'CC', Colors.accentDim + '33'] : [Colors.surfaceElevated, Colors.surfaceElt]}
+                      style={styles.rankBadge}
+                    >
+                      <Text style={[styles.rankNum, { color: i === 0 ? Colors.accentLight : Colors.textMuted }]}>#{i + 1}</Text>
+                    </LinearGradient>
+                    <View style={styles.top5Info}>
+                      <Text style={styles.top5Desc} numberOfLines={1}>{tx.description}</Text>
+                      <Text style={styles.top5Meta}>{tx.date} · {tx.category.split(' ')[0]}</Text>
+                      <View style={styles.top5BarTrack}>
+                        <View style={[styles.top5BarFill, { width: `${pctOfTotal}%` as any, backgroundColor: i === 0 ? Colors.accent : Colors.primaryLight }]} />
+                      </View>
+                    </View>
+                    <View style={styles.top5Right}>
+                      <Text style={[styles.top5Amt, i === 0 && { color: Colors.accentLight, fontSize: FontSize.lg }]}>{formatINR(tx.amount)}</Text>
+                      <Text style={styles.top5Pct}>{pctOfTotal}%</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* Subscriptions */}
+            {monthlyTx.filter(tx =>
+              ['netflix', 'spotify', 'amazon', 'gym', 'internet', 'mobile', 'sip', 'ppf', 'fd', 'rent'].some(kw =>
+                tx.description.toLowerCase().includes(kw),
+              ),
+            ).length > 0 && (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <MaterialIcons name="repeat" size={18} color={Colors.primaryLight} />
+                  <Text style={styles.cardTitle}>Recurring / Subscriptions</Text>
+                </View>
+                <View style={styles.divider} />
+                {monthlyTx
+                  .filter(tx =>
+                    ['netflix', 'spotify', 'amazon', 'gym', 'internet', 'mobile', 'sip', 'ppf', 'fd', 'rent'].some(kw =>
+                      tx.description.toLowerCase().includes(kw),
+                    ),
+                  )
+                  .slice(0, 8)
+                  .map((tx, i, arr) => (
+                    <View key={tx.id} style={[styles.subRow, i < arr.length - 1 && styles.top5Border]}>
+                      <MaterialIcons name="repeat" size={14} color={Colors.primaryLight} />
+                      <Text style={styles.subDesc} numberOfLines={1}>{tx.description}</Text>
+                      <Text style={styles.subAmt}>{formatINR(tx.amount)}</Text>
+                    </View>
+                  ))}
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
 
-      {monthlyTx.length === 0 ? (
-        <View style={styles.empty}>
-          <MaterialIcons name="bar-chart" size={56} color={Colors.textDim} />
-          <Text style={styles.emptyTitle}>No data for {sel.label}</Text>
-          <Text style={styles.emptyText}>Add transactions to see analytics</Text>
-        </View>
-      ) : (
-        <>
-          {/* Summary hero */}
-          <LinearGradient colors={['#0D1F38', '#111827']} style={styles.summaryCard}>
-            <View style={styles.summaryRow}>
-              <SumItem label="Total Spent" value={formatINR(totals.total)} color={Colors.dangerLight} />
-              <View style={styles.sumDiv} />
-              <SumItem label="Needs" value={formatINR(totals.needs)} color={totals.needs > BUDGET_CONFIG.needs ? Colors.dangerLight : Colors.successLight} />
-              <View style={styles.sumDiv} />
-              <SumItem label="Wants" value={formatINR(totals.wants)} color={totals.wants > BUDGET_CONFIG.wants ? Colors.dangerLight : Colors.warningLight} />
-              <View style={styles.sumDiv} />
-              <SumItem label="Saved" value={formatINR(totals.savings)} color={Colors.primaryLight} />
-            </View>
-            <View style={styles.savingRateRow}>
-              <Text style={styles.savingRateLbl}>Saving Rate</Text>
-              <Text style={[
-                styles.savingRateVal,
-                { color: savingRate >= 20 ? Colors.successLight : savingRate >= 10 ? Colors.warningLight : Colors.dangerLight },
-              ]}>
-                {savingRate}%
-              </Text>
-              <Text style={styles.savingRateSub}>of ₹50k salary</Text>
-            </View>
-          </LinearGradient>
-
-          {/* Budget health grade */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <MaterialIcons name="military-tech" size={18} color={Colors.accentLight} />
-              <Text style={styles.cardTitle}>Budget Health Score</Text>
-              <View style={[styles.scoreBadge, { backgroundColor: grade.color + '22', borderColor: grade.color + '55' }]}>
-                <Text style={[styles.scoreBadgeTxt, { color: grade.color }]}>Score: {grade.score}/100</Text>
+      {/* ── Salary Edit Modal ── */}
+      <Modal visible={showSalaryModal} transparent animationType="slide" onRequestClose={() => setShowSalaryModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={sModal.overlay} activeOpacity={1} onPress={() => setShowSalaryModal(false)}>
+            <View style={sModal.sheet}>
+              <View style={sModal.handle} />
+              <View style={sModal.titleRow}>
+                <MaterialIcons name="account-balance" size={20} color={Colors.accentLight} />
+                <Text style={sModal.title}>Set {sel.label} Salary</Text>
               </View>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.gradeRow}>
-              <View style={styles.gradeLeft}>
-                <Text style={styles.gradeDesc}>50 : 30 : 20 rule alignment</Text>
-                <View style={styles.gradeRatioRow}>
-                  {[
-                    { label: 'Need', val: needsPct, target: 50, color: Colors.success },
-                    { label: 'Want', val: wantsPct, target: 30, color: Colors.warning },
-                    { label: 'Save', val: savingsPct, target: 20, color: Colors.primaryLight },
-                  ].map(r => (
-                    <View key={r.label} style={styles.ratioItem}>
-                      <Text style={[styles.ratioVal, { color: r.color }]}>{r.val}%</Text>
-                      <Text style={styles.ratioLbl}>{r.label}</Text>
-                      <Text style={styles.ratioTarget}>goal {r.target}%</Text>
-                    </View>
-                  ))}
-                </View>
-                {/* vs Budget indicators */}
-                <View style={styles.vsRow}>
-                  <View style={[styles.vsChip, { backgroundColor: needsVsBudgetPct > 100 ? Colors.dangerDim + '88' : Colors.successDim + '88', borderColor: needsVsBudgetPct > 100 ? Colors.danger + '55' : Colors.success + '55' }]}>
-                    <Text style={[styles.vsTxt, { color: needsVsBudgetPct > 100 ? Colors.dangerLight : Colors.successLight }]}>
-                      Needs {needsVsBudgetPct}% of budget
-                    </Text>
-                  </View>
-                  <View style={[styles.vsChip, { backgroundColor: wantsVsBudgetPct > 100 ? Colors.dangerDim + '88' : Colors.successDim + '88', borderColor: wantsVsBudgetPct > 100 ? Colors.danger + '55' : Colors.success + '55' }]}>
-                    <Text style={[styles.vsTxt, { color: wantsVsBudgetPct > 100 ? Colors.dangerLight : Colors.successLight }]}>
-                      Wants {wantsVsBudgetPct}% of budget
-                    </Text>
-                  </View>
-                </View>
-              </View>
-              <View style={[styles.gradeCircle, { borderColor: grade.color, ...Shadow.glow(grade.color) }]}>
-                <Text style={[styles.gradeText, { color: grade.color }]}>{grade.grade}</Text>
-                <Text style={[styles.gradeLbl, { color: grade.color + 'BB' }]}>{grade.label}</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Month-over-month bar chart */}
-          {momData.filter(d => d.value > 0).length > 1 && (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <MaterialIcons name="bar-chart" size={18} color={Colors.accentLight} />
-                <Text style={styles.cardTitle}>Monthly Trend</Text>
-              </View>
-              <View style={styles.divider} />
-              <BarChart
-                data={momData}
-                width={CHART_W}
-                height={160}
-                barWidth={Math.max(26, Math.floor(CHART_W / momData.length) - 18)}
-                barBorderRadius={7}
-                noOfSections={4}
-                yAxisColor={Colors.border}
-                xAxisColor={Colors.border}
-                yAxisTextStyle={{ color: Colors.textMuted, fontSize: 9 }}
-                xAxisLabelTextStyle={{ color: Colors.textMuted, fontSize: 10, fontWeight: '700' }}
-                hideRules
-                isAnimated
-                showGradient
-                gradientColor={Colors.primaryDim + '55'}
-                backgroundColor="transparent"
-                xAxisThickness={1}
-                yAxisThickness={0}
-                spacing={10}
-              />
-            </View>
-          )}
-
-          {/* Category breakdown table */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <MaterialIcons name="category" size={18} color={Colors.accentLight} />
-              <Text style={styles.cardTitle}>Category Breakdown</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.tableHead}>
-              <Text style={[styles.th, { flex: 2 }]}>Category</Text>
-              <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>Amount</Text>
-              <Text style={[styles.th, { width: 48, textAlign: 'right' }]}>%</Text>
-            </View>
-            {catBreakdown.map((item, i) => (
-              <View key={item.cat} style={[styles.tableRow, i % 2 === 1 && styles.tableRowAlt]}>
-                <View style={[styles.catRowLeft, { flex: 2 }]}>
-                  <View style={[styles.catColorBar, { backgroundColor: item.color }]} />
-                  <Text style={styles.tdText} numberOfLines={1}>{item.cat.split(' ')[0] + ' ' + (item.cat.split(' ')[1] || '')}</Text>
-                </View>
-                <Text style={[styles.tdBold, { flex: 1, textAlign: 'right' }]}>
-                  {formatINR(item.amount)}
-                </Text>
-                <View style={{ width: 48, alignItems: 'flex-end' }}>
-                  <View style={[styles.pctBadge, { backgroundColor: item.color + '22' }]}>
-                    <Text style={[styles.pctTxt, { color: item.color }]}>
-                      {Math.round(item.pct)}%
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))}
-            {/* Total row */}
-            <View style={[styles.tableRow, { borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 4 }]}>
-              <Text style={[styles.tdBold, { flex: 2, color: Colors.textPrimary }]}>Total</Text>
-              <Text style={[styles.tdBold, { flex: 1, textAlign: 'right', color: Colors.dangerLight }]}>
-                {formatINR(totals.total)}
-              </Text>
-              <Text style={[styles.tdBold, { width: 48, textAlign: 'right' }]}>100%</Text>
-            </View>
-          </View>
-
-          {/* Payment mode split */}
-          {piePayData.length > 0 && (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <MaterialIcons name="credit-card" size={18} color={Colors.accentLight} />
-                <Text style={styles.cardTitle}>Payment Mode Split</Text>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.payRow}>
-                <PieChart
-                  data={piePayData}
-                  donut
-                  radius={76}
-                  innerRadius={46}
-                  innerCircleColor={Colors.surface}
-                  strokeColor={Colors.background}
-                  strokeWidth={2}
-                  centerLabelComponent={() => (
-                    <Text style={{ fontSize: 9, color: Colors.textMuted, textAlign: 'center' }}>
-                      {payBreakdown.length}{'\n'}modes
-                    </Text>
-                  )}
-                />
-                <View style={styles.payLegend}>
-                  {payBreakdown.map(p => (
-                    <View key={p.mode} style={styles.payLegendRow}>
-                      <View style={[styles.payDot, { backgroundColor: p.color }]} />
-                      <Text style={styles.payMode} numberOfLines={1}>
-                        {p.mode === 'Bank Transfer' ? 'Bank Transfer' : p.mode}
-                      </Text>
-                      <Text style={[styles.payAmt, { color: p.color }]}>{formatINR(p.amount)}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            </View>
-          )}
-
-          {/* Top 5 biggest */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <MaterialIcons name="local-fire-department" size={18} color={Colors.dangerLight} />
-              <Text style={styles.cardTitle}>Biggest Expenses</Text>
-            </View>
-            <View style={styles.divider} />
-            {top5.map((tx, i) => {
-              const pctOfTotal = totals.total > 0 ? Math.round((tx.amount / totals.total) * 100) : 0;
-              return (
-                <View key={tx.id} style={[styles.top5Row, i < top5.length - 1 && styles.top5Border]}>
-                  <LinearGradient
-                    colors={i === 0
-                      ? [Colors.accentDim + 'CC', Colors.accentDim + '33']
-                      : [Colors.surfaceElevated, Colors.surfaceElt]}
-                    style={styles.rankBadge}
+              <Text style={sModal.sub}>Budget limits auto-adjust: 50% Needs · 30% Wants · 20% Savings</Text>
+              <View style={sModal.presetsRow}>
+                {[30000, 40000, 50000, 60000, 75000, 100000].map(p => (
+                  <Pressable
+                    key={p}
+                    style={({ pressed }) => [sModal.preset, salaryInput === p.toString() && sModal.presetActive, pressed && { opacity: 0.75 }]}
+                    onPress={() => setSalaryInput(p.toString())}
                   >
-                    <Text style={[styles.rankNum, { color: i === 0 ? Colors.accentLight : Colors.textMuted }]}>
-                      #{i + 1}
+                    <Text style={[sModal.presetTxt, salaryInput === p.toString() && { color: Colors.accentLight }]}>
+                      {p >= 100000 ? '₹1L' : p >= 75000 ? '₹75k' : `₹${p / 1000}k`}
                     </Text>
-                  </LinearGradient>
-                  <View style={styles.top5Info}>
-                    <Text style={styles.top5Desc} numberOfLines={1}>{tx.description}</Text>
-                    <Text style={styles.top5Meta}>{tx.date} · {tx.category.split(' ')[0]}</Text>
-                    {/* Mini bar showing % of total */}
-                    <View style={styles.top5BarTrack}>
-                      <View style={[
-                        styles.top5BarFill,
-                        {
-                          width: `${pctOfTotal}%` as any,
-                          backgroundColor: i === 0 ? Colors.accent : Colors.primaryLight,
-                        },
-                      ]} />
-                    </View>
-                  </View>
-                  <View style={styles.top5Right}>
-                    <Text style={[styles.top5Amt, i === 0 && { color: Colors.accentLight, fontSize: FontSize.lg }]}>
-                      {formatINR(tx.amount)}
-                    </Text>
-                    <Text style={styles.top5Pct}>{pctOfTotal}%</Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
-          {/* Subscriptions detected */}
-          {monthlyTx.filter(tx =>
-            ['Netflix', 'Spotify', 'Amazon', 'Gym', 'Internet', 'Mobile'].some(kw =>
-              tx.description.toLowerCase().includes(kw.toLowerCase()),
-            ),
-          ).length > 0 && (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <MaterialIcons name="repeat" size={18} color={Colors.primaryLight} />
-                <Text style={styles.cardTitle}>Recurring / Subscriptions</Text>
-              </View>
-              <View style={styles.divider} />
-              {monthlyTx
-                .filter(tx =>
-                  ['netflix', 'spotify', 'amazon', 'gym', 'internet', 'mobile', 'sip', 'ppf', 'fd', 'rent'].some(kw =>
-                    tx.description.toLowerCase().includes(kw),
-                  ),
-                )
-                .slice(0, 8)
-                .map((tx, i, arr) => (
-                  <View key={tx.id} style={[styles.subRow, i < arr.length - 1 && styles.top5Border]}>
-                    <MaterialIcons name="repeat" size={14} color={Colors.primaryLight} />
-                    <Text style={styles.subDesc} numberOfLines={1}>{tx.description}</Text>
-                    <Text style={styles.subAmt}>{formatINR(tx.amount)}</Text>
-                  </View>
+                  </Pressable>
                 ))}
+              </View>
+              <View style={sModal.inputWrap}>
+                <Text style={sModal.rupeeSign}>₹</Text>
+                <TextInput
+                  style={sModal.input}
+                  value={salaryInput}
+                  onChangeText={setSalaryInput}
+                  placeholder="Enter salary"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="numeric"
+                  autoFocus
+                  selectTextOnFocus
+                />
+              </View>
+              {(() => {
+                const val = parseFloat(salaryInput.replace(/,/g, ''));
+                if (!isFinite(val) || val <= 0) return null;
+                return (
+                  <View style={sModal.preview}>
+                    <Text style={sModal.previewTitle}>Budget Preview</Text>
+                    {[
+                      { label: 'Needs (50%)', amt: Math.round(val * 0.5), color: Colors.success },
+                      { label: 'Wants (30%)', amt: Math.round(val * 0.3), color: Colors.warning },
+                      { label: 'Savings (20%)', amt: Math.round(val * 0.2), color: Colors.primaryLight },
+                    ].map(row => (
+                      <View key={row.label} style={sModal.previewRow}>
+                        <Text style={sModal.previewLbl}>{row.label}</Text>
+                        <Text style={[sModal.previewAmt, { color: row.color }]}>{formatINR(row.amt)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+              <View style={sModal.btnRow}>
+                <Pressable style={sModal.cancelBtn} onPress={() => setShowSalaryModal(false)}>
+                  <Text style={sModal.cancelTxt}>Cancel</Text>
+                </Pressable>
+                <Pressable style={sModal.saveBtn} onPress={handleSaveSalary}>
+                  <LinearGradient colors={[Colors.accent, Colors.accentDim + 'FF']} style={sModal.saveBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                    <Text style={sModal.saveTxt}>Save</Text>
+                  </LinearGradient>
+                </Pressable>
+              </View>
             </View>
-          )}
-        </>
-      )}
-    </ScrollView>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
   );
 }
 
@@ -478,6 +537,43 @@ function SumItem({ label, value, color }: { label: string; value: string; color:
   );
 }
 
+const sModal = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: Colors.surfaceElt,
+    borderTopLeftRadius: Radius.xxl,
+    borderTopRightRadius: Radius.xxl,
+    padding: Spacing.md,
+    paddingBottom: 48,
+    gap: Spacing.md,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: Colors.borderMid,
+  },
+  handle: { width: 36, height: 4, backgroundColor: Colors.borderMid, borderRadius: 2, alignSelf: 'center', marginBottom: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  title: { fontSize: FontSize.xl, fontWeight: FontWeight.heavy, color: Colors.textPrimary },
+  sub: { fontSize: FontSize.sm, color: Colors.textMuted, lineHeight: 18, marginTop: -8 },
+  presetsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  preset: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  presetActive: { backgroundColor: Colors.accentDim + '55', borderColor: Colors.accent + '88' },
+  presetTxt: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.textSecondary },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.accentLight + '55', paddingHorizontal: 16, paddingVertical: 12 },
+  rupeeSign: { fontSize: FontSize.xl, fontWeight: FontWeight.heavy, color: Colors.accentLight },
+  input: { flex: 1, fontSize: FontSize.xl, fontWeight: FontWeight.heavy, color: Colors.textPrimary },
+  preview: { backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, padding: 14, gap: 8, borderWidth: 1, borderColor: Colors.border },
+  previewTitle: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 },
+  previewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previewLbl: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  previewAmt: { fontSize: FontSize.sm, fontWeight: FontWeight.heavy },
+  btnRow: { flexDirection: 'row', gap: Spacing.sm },
+  cancelBtn: { flex: 1, paddingVertical: 14, borderRadius: Radius.md, alignItems: 'center', backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  cancelTxt: { fontSize: FontSize.body, fontWeight: FontWeight.semibold, color: Colors.textSecondary },
+  saveBtn: { flex: 2, borderRadius: Radius.md, overflow: 'hidden' },
+  saveBtnGrad: { paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
+  saveTxt: { fontSize: FontSize.body, fontWeight: FontWeight.heavy, color: '#000' },
+});
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { paddingHorizontal: Spacing.md, gap: Spacing.md },
@@ -485,32 +581,20 @@ const styles = StyleSheet.create({
   pageTitle: { fontSize: FontSize.xxl, fontWeight: FontWeight.heavy, color: Colors.textPrimary },
   pageSub: { fontSize: FontSize.sm, color: Colors.textMuted, marginTop: 2 },
 
-  monthRow: { flexDirection: 'row', gap: 8, paddingRight: Spacing.md, paddingVertical: 4 },
-  monthBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
+  monthSelectorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  monthRow: { flexDirection: 'row', gap: 8, paddingRight: Spacing.sm, paddingVertical: 4 },
+  monthBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
   monthBtnActive: { borderColor: Colors.accent + '88' },
   monthBtnTxt: { fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: FontWeight.semibold },
   monthBtnTxtActive: { color: Colors.accentLight },
+  salaryPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.accentDim + '44', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: Colors.accent + '44', flexShrink: 0 },
+  salaryPillTxt: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, color: Colors.accentLight },
 
   empty: { alignItems: 'center', paddingVertical: 60, gap: 10 },
   emptyTitle: { fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: Colors.textSecondary },
   emptyText: { fontSize: FontSize.body, color: Colors.textMuted },
 
-  summaryCard: {
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: Spacing.sm,
-    ...Shadow.sm,
-  },
+  summaryCard: { borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.border, gap: Spacing.sm, ...Shadow.sm },
   summaryRow: { flexDirection: 'row', alignItems: 'center' },
   summaryItem: { flex: 1, alignItems: 'center', gap: 3 },
   summaryLbl: { fontSize: 9, color: Colors.textMuted, fontWeight: FontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -521,24 +605,11 @@ const styles = StyleSheet.create({
   savingRateVal: { fontSize: FontSize.md, fontWeight: FontWeight.heavy },
   savingRateSub: { fontSize: FontSize.xs, color: Colors.textMuted },
 
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    gap: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-  },
+  card: { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.md, borderWidth: 1, borderColor: Colors.border, ...Shadow.sm },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardTitle: { fontSize: FontSize.md, fontWeight: FontWeight.bold, color: Colors.textPrimary, flex: 1 },
   divider: { height: 1, backgroundColor: Colors.border, marginVertical: -4 },
-  scoreBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-  },
+  scoreBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full, borderWidth: 1 },
   scoreBadgeTxt: { fontSize: FontSize.xs, fontWeight: FontWeight.bold },
 
   gradeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
@@ -552,33 +623,14 @@ const styles = StyleSheet.create({
   vsRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   vsChip: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: Radius.full, borderWidth: 1 },
   vsTxt: { fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  gradeCircle: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
-    borderWidth: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surfaceElevated,
-    flexShrink: 0,
-  },
+  gradeCircle: { width: 74, height: 74, borderRadius: 37, borderWidth: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceElevated, flexShrink: 0 },
   gradeText: { fontSize: FontSize.xxl, fontWeight: FontWeight.heavy },
   gradeLbl: { fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
 
-  tableHead: {
-    flexDirection: 'row',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
+  tableHead: { flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: Colors.border },
   th: { fontSize: FontSize.xs, fontWeight: FontWeight.semibold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   tableRow: { flexDirection: 'row', paddingVertical: 9, alignItems: 'center' },
-  tableRowAlt: {
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: Radius.sm,
-    marginHorizontal: -6,
-    paddingHorizontal: 6,
-  },
+  tableRowAlt: { backgroundColor: Colors.surfaceElevated, borderRadius: Radius.sm, marginHorizontal: -6, paddingHorizontal: 6 },
   catRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   catColorBar: { width: 3, height: 18, borderRadius: 2, flexShrink: 0 },
   tdText: { fontSize: FontSize.sm, color: Colors.textPrimary, fontWeight: FontWeight.medium },
