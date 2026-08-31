@@ -61,8 +61,8 @@ const SORT_OPTIONS: { key: SortOption; label: string; icon: string }[] = [
 
 const CURRENT_YEAR = 2026;
 const MONTH_FILTERS = [
-  'All',
-  ...MONTH_NAMES.slice(0, 9).map(m => `${m} ${CURRENT_YEAR}`),
+  { label: 'All', value: 'All' },
+  ...MONTH_NAMES.slice(0, 9).map(m => ({ label: m, value: `${m} ${CURRENT_YEAR}` })),
 ];
 
 // ── Person-transfer prefix patterns ─────────────────────────────────────────
@@ -501,25 +501,23 @@ export default function TransactionsScreen() {
       {/* Type filter + Sort — only in list view */}
       {viewMode === 'list' && (
         <View style={styles.filterRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-            <View style={styles.chipRow}>
-              {TYPE_FILTERS.map(t => {
-                const isActive = typeFilter === t;
-                const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
-                return (
-                  <Pressable
-                    key={t}
-                    style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
-                    onPress={() => setTypeFilter(t)}
-                  >
-                    {t !== 'All' && (
-                      <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
-                    )}
-                    <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {TYPE_FILTERS.map(t => {
+              const isActive = typeFilter === t;
+              const dotColor = t === 'All' ? Colors.textMuted : Colors.types[t as TransactionType].dot;
+              return (
+                <Pressable
+                  key={t}
+                  style={[styles.chip, isActive && { backgroundColor: dotColor + '22', borderColor: dotColor + '77' }]}
+                  onPress={() => setTypeFilter(t)}
+                >
+                  {t !== 'All' && (
+                    <View style={[styles.chipDot, { backgroundColor: isActive ? dotColor : Colors.textDim }]} />
+                  )}
+                  <Text style={[styles.chipTxt, isActive && { color: Colors.textPrimary }]}>{t}</Text>
+                </Pressable>
+              );
+            })}
           </ScrollView>
           <Pressable
             style={({ pressed }) => [styles.sortBtn, pressed && { opacity: 0.7 }]}
@@ -542,25 +540,36 @@ export default function TransactionsScreen() {
       )}
 
       {/* Month filter */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthScroll}>
-        <View style={styles.chipRow}>
+      <View style={styles.monthScrollWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.monthChipRow}
+        >
           {MONTH_FILTERS.map(m => {
-            const isActive = monthFilter === m;
+            const isActive = monthFilter === m.value;
             return (
               <Pressable
-                key={m}
-                style={[
-                  styles.monthChip,
-                  isActive && { backgroundColor: Colors.accent + '22', borderColor: Colors.accent + '66' },
-                ]}
-                onPress={() => setMonthFilter(m)}
+                key={m.value}
+                style={[styles.monthChip, isActive && styles.monthChipActive]}
+                onPress={() => setMonthFilter(m.value)}
               >
-                <Text style={[styles.monthChipTxt, isActive && { color: Colors.accentLight }]}>{m}</Text>
+                {isActive && (
+                  <LinearGradient
+                    colors={[Colors.accent + 'CC', Colors.accentDim + 'AA']}
+                    style={StyleSheet.absoluteFillObject}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  />
+                )}
+                <Text style={[styles.monthChipTxt, isActive && styles.monthChipTxtActive]}>
+                  {m.label}
+                </Text>
               </Pressable>
             );
           })}
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       {/* ── PEOPLE VIEW ── */}
       {viewMode === 'people' ? (
@@ -890,6 +899,7 @@ const styles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.md,
+    paddingRight: Spacing.sm,
     gap: 7,
     alignItems: 'center',
     paddingVertical: 4,
@@ -937,18 +947,33 @@ const styles = StyleSheet.create({
   },
   peopleBannerTxt: { fontSize: FontSize.xs, color: Colors.textMuted, flex: 1 },
 
-  monthScroll: { marginBottom: Spacing.xs },
+  monthScrollWrap: { marginBottom: Spacing.xs },
+  monthChipRow: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.md,
+    paddingRight: Spacing.md,
+    gap: 8,
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
   monthChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: Radius.full,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
+    overflow: 'hidden',
+    minWidth: 44,
+    alignItems: 'center',
   },
-  monthChipTxt: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  monthChipActive: {
+    borderColor: Colors.accent + '88',
+  },
+  monthChipTxt: { fontSize: FontSize.body, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  monthChipTxtActive: { color: '#000', fontWeight: FontWeight.heavy },
 
-  listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4 },
+  listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4, flexGrow: 1 },
 
   // ── Person group card ──────────────────────────────────────────────────
   peopleSummaryCard: { marginBottom: Spacing.sm },
