@@ -61,8 +61,8 @@ const SORT_OPTIONS: { key: SortOption; label: string; icon: string }[] = [
 
 const CURRENT_YEAR = 2026;
 const MONTH_FILTERS = [
-  'All',
-  ...MONTH_NAMES.slice(0, 9).map(m => `${m} ${CURRENT_YEAR}`),
+  { label: 'All', value: 'All' },
+  ...MONTH_NAMES.slice(0, 9).map(m => ({ label: m, value: `${m} ${CURRENT_YEAR}` })),
 ];
 
 // ── Person-transfer prefix patterns ─────────────────────────────────────────
@@ -540,28 +540,36 @@ export default function TransactionsScreen() {
       )}
 
       {/* Month filter */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.monthScroll}
-        contentContainerStyle={styles.monthChipRow}
-      >
-        {MONTH_FILTERS.map(m => {
-          const isActive = monthFilter === m;
-          return (
-            <Pressable
-              key={m}
-              style={[
-                styles.monthChip,
-                isActive && { backgroundColor: Colors.accent + '22', borderColor: Colors.accent + '66' },
-              ]}
-              onPress={() => setMonthFilter(m)}
-            >
-              <Text style={[styles.monthChipTxt, isActive && { color: Colors.accentLight }]}>{m}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      <View style={styles.monthScrollWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.monthChipRow}
+        >
+          {MONTH_FILTERS.map(m => {
+            const isActive = monthFilter === m.value;
+            return (
+              <Pressable
+                key={m.value}
+                style={[styles.monthChip, isActive && styles.monthChipActive]}
+                onPress={() => setMonthFilter(m.value)}
+              >
+                {isActive && (
+                  <LinearGradient
+                    colors={[Colors.accent + 'CC', Colors.accentDim + 'AA']}
+                    style={StyleSheet.absoluteFillObject}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  />
+                )}
+                <Text style={[styles.monthChipTxt, isActive && styles.monthChipTxtActive]}>
+                  {m.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       {/* ── PEOPLE VIEW ── */}
       {viewMode === 'people' ? (
@@ -939,24 +947,31 @@ const styles = StyleSheet.create({
   },
   peopleBannerTxt: { fontSize: FontSize.xs, color: Colors.textMuted, flex: 1 },
 
-  monthScroll: { marginBottom: Spacing.xs, flexGrow: 0 },
+  monthScrollWrap: { marginBottom: Spacing.xs },
   monthChipRow: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.md,
     paddingRight: Spacing.md,
-    gap: 7,
+    gap: 8,
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   monthChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: Radius.full,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
+    overflow: 'hidden',
+    minWidth: 44,
+    alignItems: 'center',
   },
-  monthChipTxt: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  monthChipActive: {
+    borderColor: Colors.accent + '88',
+  },
+  monthChipTxt: { fontSize: FontSize.body, color: Colors.textMuted, fontWeight: FontWeight.semibold },
+  monthChipTxtActive: { color: '#000', fontWeight: FontWeight.heavy },
 
   listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm, paddingTop: 4, flexGrow: 1 },
 
